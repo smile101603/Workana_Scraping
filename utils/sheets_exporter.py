@@ -2,6 +2,7 @@
 Google Sheets exporter for Workana jobs
 """
 import json
+import re
 from datetime import datetime
 from typing import List, Dict, Optional
 import gspread
@@ -138,26 +139,13 @@ class SheetsExporter:
     def _setup_headers(self, worksheet: gspread.Worksheet):
         """Set up column headers in the worksheet at row 1 (only if they don't exist)"""
         headers = [
-            "ID",
+            "Time",
             "Title",
-            "Description",
-            "URL",
-            "Posted Date",
-            "Bids Count",
-            "Budget",
-            "Budget Min",
-            "Budget Max",
-            "Budget Type",
-            "Skills",
-            "Client Name",
-            "Client Country",
-            "Client Rating",
+            "budget",
+            "country",
             "Payment Verified",
-            "Last Reply",
-            "Featured",
-            "Max Project",
-            "First Seen At",
-            "Scraped At"
+            "Client Rating",
+            "URL"
         ]
         
         # Check if row 1 already has the expected headers
@@ -210,22 +198,27 @@ class SheetsExporter:
                     pass
             
             # Determine color based on rules:
-            # Green: >= 1000 or hourly
+            # Magenta: hourly
+            # Green: >= 1000 (fixed only)
             # Yellow: 500-1000 (fixed only)
             # Light orange: 250-500 (fixed only)
             color = None
             color_name = None
             
-            if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                # Green
+            if budget_type == 'hourly':
+                # Magenta for hourly projects
+                color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                color_name = 'Magenta'
+            elif budget_min_float and budget_min_float >= 1000:
+                # Green for fixed >= 1000
                 color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                 color_name = 'Green'
             elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
-                # Yellow
+                # Yellow for fixed 500-1000
                 color = {'red': 1.0, 'green': 0.95, 'blue': 0.8}
                 color_name = 'Yellow'
             elif budget_min_float and 250 <= budget_min_float < 500 and budget_type == 'fixed':
-                # Light orange
+                # Light orange for fixed 250-500
                 color = {'red': 1.0, 'green': 0.8, 'blue': 0.6}
                 color_name = 'Light Orange'
             
@@ -275,16 +268,20 @@ class SheetsExporter:
                 color = None
                 color_name = None
                 
-                if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                    # Green
+                if budget_type == 'hourly':
+                    # Magenta for hourly projects
+                    color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                    color_name = 'Magenta'
+                elif budget_min_float and budget_min_float >= 1000:
+                    # Green for fixed >= 1000
                     color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                     color_name = 'Green'
                 elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
-                    # Yellow
+                    # Yellow for fixed 500-1000
                     color = {'red': 1.0, 'green': 0.95, 'blue': 0.8}
                     color_name = 'Yellow'
                 elif budget_min_float and 250 <= budget_min_float < 500 and budget_type == 'fixed':
-                    # Light orange
+                    # Light orange for fixed 250-500
                     color = {'red': 1.0, 'green': 0.8, 'blue': 0.6}
                     color_name = 'Light Orange'
                 
@@ -297,7 +294,7 @@ class SheetsExporter:
                                 'startRowIndex': row - 1,  # 0-indexed
                                 'endRowIndex': row,        # 0-indexed (exclusive)
                                 'startColumnIndex': 0,
-                                'endColumnIndex': 20  # Format entire row
+                                'endColumnIndex': 7  # Format entire row (7 columns: Time, Title, budget, country, Payment Verified, Client Rating, URL)
                             },
                             'cell': {
                                 'userEnteredFormat': {
@@ -332,9 +329,26 @@ class SheetsExporter:
             for row in range(start_row, end_row + 1):
                 try:
                     # Get budget values from the row
-                    # Column I (9) = Budget Type, Column H (8) = Budget Min
-                    budget_type = worksheet.cell(row, 9).value  # Budget Type
-                    budget_min = worksheet.cell(row, 8).value   # Budget Min
+                    # Column C (3) = budget (contains budget string with type) - new column order
+                    budget_str = worksheet.cell(row, 3).value  # budget column
+                    budget_min = None
+                    budget_type = None
+                    
+                    # Try to extract budget_min and budget_type from budget string
+                    if budget_str:
+                        budget_str_lower = str(budget_str).lower()
+                        if 'hourly' in budget_str_lower:
+                            budget_type = 'hourly'
+                        elif 'fixed' in budget_str_lower:
+                            budget_type = 'fixed'
+                        
+                        # Try to extract numeric value
+                        numbers = re.findall(r'\d+\.?\d*', str(budget_str))
+                        if numbers:
+                            try:
+                                budget_min = float(numbers[0])
+                            except (ValueError, TypeError):
+                                pass
                     
                     try:
                         budget_min_float = float(budget_min) if budget_min and str(budget_min).strip() else None
@@ -342,19 +356,23 @@ class SheetsExporter:
                         budget_min_float = None
                     
                     # Determine color based on rules:
-                    # Green: >= 1000 or hourly
+                    # Magenta: hourly
+                    # Green: >= 1000 (fixed only)
                     # Yellow: 500-1000 (fixed only)
                     # Light orange: 250-500 (fixed only)
                     color = None
                     
-                    if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                        # Green
+                    if budget_type == 'hourly':
+                        # Magenta for hourly projects
+                        color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                    elif budget_min_float and budget_min_float >= 1000:
+                        # Green for fixed >= 1000
                         color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                     elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
-                        # Yellow
+                        # Yellow for fixed 500-1000
                         color = {'red': 1.0, 'green': 0.95, 'blue': 0.8}
                     elif budget_min_float and 250 <= budget_min_float < 500 and budget_type == 'fixed':
-                        # Light orange
+                        # Light orange for fixed 250-500
                         color = {'red': 1.0, 'green': 0.8, 'blue': 0.6}
                     
                     # Apply formatting if color is determined
@@ -366,6 +384,113 @@ class SheetsExporter:
                     print(f"Warning: Could not format row {row}: {e}")
                     continue
     
+    def _apply_checkbox_formatting(self, worksheet: gspread.Worksheet, start_row: int, end_row: int, jobs: List[Dict] = None):
+        """
+        Apply checkbox formatting to Payment Verified column (column 5, index 4)
+        
+        Args:
+            worksheet: Worksheet to format
+            start_row: First row to format (1-indexed)
+            end_row: Last row to format (1-indexed)
+            jobs: List of job dictionaries
+        """
+        try:
+            sheet_id = worksheet.id
+            payment_verified_col_index = 4  # Column 5 (Payment Verified) in 0-based index
+            
+            # Prepare batch update requests for checkboxes
+            requests = []
+            
+            for i, job in enumerate(jobs):
+                row = start_row + i
+                payment_verified = bool(job.get('client_payment_verified', False))
+                
+                # Add checkbox format request with data validation
+                requests.append({
+                    'setDataValidation': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': row - 1,  # 0-indexed
+                            'endRowIndex': row,        # 0-indexed (exclusive)
+                            'startColumnIndex': payment_verified_col_index,
+                            'endColumnIndex': payment_verified_col_index + 1
+                        },
+                        'rule': {
+                            'condition': {
+                                'type': 'BOOLEAN'
+                            },
+                            'showCustomUi': True
+                        }
+                    }
+                })
+                
+                # Set the boolean value
+                requests.append({
+                    'updateCells': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': row - 1,  # 0-indexed
+                            'endRowIndex': row,        # 0-indexed (exclusive)
+                            'startColumnIndex': payment_verified_col_index,
+                            'endColumnIndex': payment_verified_col_index + 1
+                        },
+                        'rows': [{
+                            'values': [{
+                                'userEnteredValue': {
+                                    'boolValue': payment_verified
+                                }
+                            }]
+                        }],
+                        'fields': 'userEnteredValue.boolValue'
+                    }
+                })
+            
+            # Apply all checkbox formatting in one batch update
+            if requests:
+                try:
+                    self.spreadsheet.batch_update({'requests': requests})
+                    print(f"  ✅ Applied checkbox formatting to Payment Verified column")
+                except Exception as e:
+                    print(f"  ⚠️  Warning: Could not apply checkbox formatting: {e}")
+        except Exception as e:
+            print(f"  ⚠️  Warning: Error applying checkbox formatting: {e}")
+    
+    def _format_time(self, scraped_at: str) -> str:
+        """
+        Format scraped_at datetime string to "YYYY/MM/DD. HH:MM" format
+        
+        Args:
+            scraped_at: Datetime string from database (e.g., "2026-01-20 13:29:00")
+        
+        Returns:
+            Formatted time string (e.g., "2026/01/20. 13:29")
+        """
+        if not scraped_at:
+            return ''
+        
+        try:
+            # Parse the datetime string (format: "YYYY-MM-DD HH:MM:SS" or similar)
+            if isinstance(scraped_at, str):
+                # Try parsing common datetime formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M']:
+                    try:
+                        dt = datetime.strptime(scraped_at, fmt)
+                        # Format as "YYYY/MM/DD. HH:MM"
+                        return dt.strftime('%Y/%m/%d. %H:%M')
+                    except ValueError:
+                        continue
+                # If parsing fails, try to extract date/time parts manually
+                # Fallback: return as-is if we can't parse
+                return scraped_at
+            elif isinstance(scraped_at, datetime):
+                # Already a datetime object
+                return scraped_at.strftime('%Y/%m/%d. %H:%M')
+            else:
+                return str(scraped_at)
+        except Exception as e:
+            # If formatting fails, return original value
+            return str(scraped_at) if scraped_at else ''
+    
     def job_to_row(self, job: Dict) -> List:
         """
         Convert job dictionary to row data
@@ -374,38 +499,45 @@ class SheetsExporter:
             job: Job dictionary
         
         Returns:
-            List of values for the row
+            List of values for the row (only selected columns)
         """
-        # Handle skills (convert list to comma-separated string)
-        skills = job.get('skills', [])
-        if isinstance(skills, str):
+        # Format Time column from scraped_at
+        time_str = self._format_time(job.get('scraped_at', ''))
+        
+        # Format budget - use the budget field, or construct from budget_min/budget_max/budget_type
+        budget = job.get('budget', '')
+        if not budget:
+            budget_min = job.get('budget_min', '')
+            budget_max = job.get('budget_max', '')
+            budget_type = job.get('budget_type', '')
+            if budget_min or budget_max:
+                if budget_min and budget_max and budget_min != budget_max:
+                    budget = f"{budget_min}-{budget_max} {budget_type}" if budget_type else f"{budget_min}-{budget_max}"
+                elif budget_min:
+                    budget = f"{budget_min} {budget_type}" if budget_type else str(budget_min)
+                elif budget_max:
+                    budget = f"{budget_max} {budget_type}" if budget_type else str(budget_max)
+        
+        # Format client rating
+        client_rating = job.get('client_rating', '')
+        if client_rating is not None:
             try:
-                skills = json.loads(skills)
-            except:
-                skills = [skills]
-        skills_str = ', '.join(skills) if isinstance(skills, list) else str(skills) if skills else ''
+                rating_float = float(client_rating)
+                client_rating = f"{rating_float:.2f}" if rating_float > 0 else ''
+            except (ValueError, TypeError):
+                pass
+        
+        # Payment Verified: use boolean for checkbox (True/False)
+        payment_verified = bool(job.get('client_payment_verified', False))
         
         return [
-            job.get('id', ''),
-            job.get('title', ''),
-            job.get('description', ''),
-            job.get('url', ''),
-            job.get('posted_date_relative', ''),
-            job.get('bids_count', ''),
-            job.get('budget', ''),
-            job.get('budget_min', ''),
-            job.get('budget_max', ''),
-            job.get('budget_type', ''),
-            skills_str,
-            job.get('client_name', ''),
-            job.get('client_country', ''),
-            job.get('client_rating', ''),
-            'Yes' if job.get('client_payment_verified') else 'No',
-            job.get('client_last_reply', ''),
-            'Yes' if job.get('is_featured') else 'No',
-            'Yes' if job.get('is_max_project') else 'No',
-            job.get('first_seen_at', ''),
-            job.get('scraped_at', '')
+            time_str,  # Time (formatted from scraped_at)
+            job.get('title', ''),  # Title
+            budget,  # budget
+            job.get('client_country', ''),  # country
+            payment_verified,  # Payment Verified (boolean for checkbox)
+            client_rating,  # Client Rating
+            job.get('url', '')  # URL
         ]
     
     def export_jobs(self, jobs: List[Dict], date: datetime = None) -> int:
@@ -499,6 +631,10 @@ class SheetsExporter:
                 end_row = start_row + len(rows) - 1
                 print(f"  Applying formatting to rows {start_row}-{end_row}...")
                 self._apply_simple_formatting(worksheet, start_row, end_row, jobs)
+                
+                # Apply checkbox formatting to Payment Verified column (column 5, index 4)
+                self._apply_checkbox_formatting(worksheet, start_row, end_row, jobs)
+                
                 print(f"  ✅ Formatting applied successfully")
             except (TransportError, RequestsConnectionError) as e:
                 # Formatting failed but data was written, so continue
