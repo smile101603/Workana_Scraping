@@ -138,26 +138,14 @@ class SheetsExporter:
     def _setup_headers(self, worksheet: gspread.Worksheet):
         """Set up column headers in the worksheet at row 1 (only if they don't exist)"""
         headers = [
-            "ID",
+            "Time",
             "Title",
-            "Description",
-            "URL",
-            "Posted Date",
-            "Bids Count",
+            "Payment",
+            "Country",
+            "Rating",
             "Budget",
-            "Budget Min",
-            "Budget Max",
-            "Budget Type",
             "Skills",
-            "Client Name",
-            "Client Country",
-            "Client Rating",
-            "Payment Verified",
-            "Last Reply",
-            "Featured",
-            "Max Project",
-            "First Seen At",
-            "Scraped At"
+            "URL"
         ]
         
         # Check if row 1 already has the expected headers
@@ -210,14 +198,19 @@ class SheetsExporter:
                     pass
             
             # Determine color based on rules:
-            # Green: >= 1000 or hourly
+            # Magenta: hourly
+            # Green: >= 1000 (fixed only)
             # Yellow: 500-1000 (fixed only)
             # Light orange: 250-500 (fixed only)
             color = None
             color_name = None
             
-            if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                # Green
+            if budget_type == 'hourly':
+                # Magenta for hourly projects
+                color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                color_name = 'Magenta'
+            elif budget_min_float and budget_min_float >= 1000:
+                # Green for high-value fixed projects
                 color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                 color_name = 'Green'
             elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
@@ -275,8 +268,12 @@ class SheetsExporter:
                 color = None
                 color_name = None
                 
-                if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                    # Green
+                if budget_type == 'hourly':
+                    # Magenta for hourly projects
+                    color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                    color_name = 'Magenta'
+                elif budget_min_float and budget_min_float >= 1000:
+                    # Green for high-value fixed projects
                     color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                     color_name = 'Green'
                 elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
@@ -297,7 +294,7 @@ class SheetsExporter:
                                 'startRowIndex': row - 1,  # 0-indexed
                                 'endRowIndex': row,        # 0-indexed (exclusive)
                                 'startColumnIndex': 0,
-                                'endColumnIndex': 20  # Format entire row
+                                'endColumnIndex': 8  # Format entire row (8 columns)
                             },
                             'cell': {
                                 'userEnteredFormat': {
@@ -342,13 +339,17 @@ class SheetsExporter:
                         budget_min_float = None
                     
                     # Determine color based on rules:
-                    # Green: >= 1000 or hourly
+                    # Magenta: hourly
+                    # Green: >= 1000 (fixed only)
                     # Yellow: 500-1000 (fixed only)
                     # Light orange: 250-500 (fixed only)
                     color = None
                     
-                    if budget_type == 'hourly' or (budget_min_float and budget_min_float >= 1000):
-                        # Green
+                    if budget_type == 'hourly':
+                        # Magenta for hourly projects
+                        color = {'red': 0.95, 'green': 0.7, 'blue': 0.95}
+                    elif budget_min_float and budget_min_float >= 1000:
+                        # Green for high-value fixed projects
                         color = {'red': 0.85, 'green': 0.95, 'blue': 0.85}
                     elif budget_min_float and 500 <= budget_min_float < 1000 and budget_type == 'fixed':
                         # Yellow
@@ -376,6 +377,21 @@ class SheetsExporter:
         Returns:
             List of values for the row
         """
+        # Format scraped_at timestamp to YYYY/MM/DD-HH:MM format
+        scraped_at = job.get('scraped_at', '')
+        if scraped_at:
+            try:
+                # Parse the datetime string and format it
+                if isinstance(scraped_at, str):
+                    dt = datetime.strptime(scraped_at, '%Y-%m-%d %H:%M:%S')
+                else:
+                    dt = scraped_at
+                formatted_time = dt.strftime('%Y/%m/%d-%H:%M')
+            except:
+                formatted_time = str(scraped_at)
+        else:
+            formatted_time = ''
+        
         # Handle skills (convert list to comma-separated string)
         skills = job.get('skills', [])
         if isinstance(skills, str):
@@ -385,27 +401,18 @@ class SheetsExporter:
                 skills = [skills]
         skills_str = ', '.join(skills) if isinstance(skills, list) else str(skills) if skills else ''
         
+        # Payment Verified as boolean (for checkbox)
+        payment_verified = bool(job.get('client_payment_verified', False))
+        
         return [
-            job.get('id', ''),
-            job.get('title', ''),
-            job.get('description', ''),
-            job.get('url', ''),
-            job.get('posted_date_relative', ''),
-            job.get('bids_count', ''),
-            job.get('budget', ''),
-            job.get('budget_min', ''),
-            job.get('budget_max', ''),
-            job.get('budget_type', ''),
-            skills_str,
-            job.get('client_name', ''),
-            job.get('client_country', ''),
-            job.get('client_rating', ''),
-            'Yes' if job.get('client_payment_verified') else 'No',
-            job.get('client_last_reply', ''),
-            'Yes' if job.get('is_featured') else 'No',
-            'Yes' if job.get('is_max_project') else 'No',
-            job.get('first_seen_at', ''),
-            job.get('scraped_at', '')
+            formatted_time,  # Scraped At (formatted)
+            job.get('title', ''),  # Title
+            payment_verified,  # Payment Verified (checkbox)
+            job.get('client_country', ''),  # Country
+            job.get('client_rating', ''),  # Client Rating
+            job.get('budget', ''),  # Budget
+            skills_str,  # Skills
+            job.get('url', '')  # URL
         ]
     
     def export_jobs(self, jobs: List[Dict], date: datetime = None) -> int:
@@ -499,6 +506,34 @@ class SheetsExporter:
                 end_row = start_row + len(rows) - 1
                 print(f"  Applying formatting to rows {start_row}-{end_row}...")
                 self._apply_simple_formatting(worksheet, start_row, end_row, jobs)
+                
+                # Format Payment column (column C, index 2) as checkboxes
+                if len(rows) > 0:
+                    try:
+                        sheet_id = worksheet.id
+                        requests = [{
+                            'setDataValidation': {
+                                'range': {
+                                    'sheetId': sheet_id,
+                                    'startRowIndex': start_row - 1,  # 0-indexed
+                                    'endRowIndex': end_row,  # 0-indexed (exclusive)
+                                    'startColumnIndex': 2,  # Column C (Payment)
+                                    'endColumnIndex': 3
+                                },
+                                'rule': {
+                                    'condition': {
+                                        'type': 'BOOLEAN'
+                                    },
+                                    'showCustomUi': True,
+                                    'strict': True
+                                }
+                            }
+                        }]
+                        self.spreadsheet.batch_update({'requests': requests})
+                        print(f"  ✅ Payment column formatted as checkboxes")
+                    except Exception as e:
+                        print(f"  ⚠️  Warning: Could not format Payment as checkboxes: {e}")
+                
                 print(f"  ✅ Formatting applied successfully")
             except (TransportError, RequestsConnectionError) as e:
                 # Formatting failed but data was written, so continue
