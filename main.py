@@ -62,31 +62,51 @@ def run_scrape(db, scraper, slack_notifier, translator, sheets_exporter):
         
         # Send Slack notification for new jobs (individually)
         # Only send jobs that haven't been sent before (prevent duplicates)
-        if slack_notifier and new_jobs:
+        if not slack_notifier:
+            print("ℹ️  Slack notifier not configured, skipping Slack notifications")
+        elif not new_jobs:
+            print("ℹ️  No new jobs to send to Slack")
+        else:
             # Filter out jobs that have already been sent to Slack
             unsent_jobs = []
             for job in new_jobs:
                 job_id = job.get('id')
-                if job_id and not db.is_job_sent_to_slack(job_id):
+                if not job_id:
+                    print(f"⚠️  Skipping job without ID: {job.get('title', 'Unknown')[:50]}")
+                    continue
+                if db.is_job_sent_to_slack(job_id):
+                    print(f"ℹ️  Job {job_id} already sent to Slack, skipping")
+                else:
                     unsent_jobs.append(job)
             
             if unsent_jobs:
-                print(f"Sending {len(unsent_jobs)} job(s) individually to Slack...")
+                print(f"📤 Sending {len(unsent_jobs)} job(s) individually to Slack...")
                 
                 success_count = 0
+                failed_count = 0
                 for i, job in enumerate(unsent_jobs, 1):
                     job_id = job.get('id')
+                    job_title = job.get('title', 'Unknown')[:50]
+                    print(f"   [{i}/{len(unsent_jobs)}] Sending job: {job_title}...")
                     success = slack_notifier.send_single_job(job)
                     if success and job_id:
                         # Mark as sent to prevent duplicates
-                        db.mark_job_sent_to_slack(job_id)
-                        success_count += 1
+                        if db.mark_job_sent_to_slack(job_id):
+                            success_count += 1
+                            print(f"   ✅ Job {job_id} sent and marked in database")
+                        else:
+                            print(f"   ⚠️  Job {job_id} sent but failed to mark in database")
+                    else:
+                        failed_count += 1
+                        print(f"   ❌ Failed to send job {job_id}")
                     
                     # Small delay between messages to avoid rate limiting
                     if i < len(unsent_jobs):
                         time.sleep(0.5)
                 
                 print(f"✅ Sent {success_count}/{len(unsent_jobs)} job notifications to Slack")
+                if failed_count > 0:
+                    print(f"⚠️  {failed_count} job(s) failed to send")
             else:
                 print(f"ℹ️  All {len(new_jobs)} new job(s) were already sent to Slack (skipping duplicates)")
         
@@ -105,23 +125,33 @@ def run_scrape(db, scraper, slack_notifier, translator, sheets_exporter):
         )
         
         # Export jobs to Google Sheets (daily sheet)
-        if sheets_exporter and sheets_exporter.is_available():
+        # Use new_jobs directly instead of querying database to avoid timing/timezone issues
+        if not sheets_exporter:
+            print("ℹ️  Google Sheets exporter not configured, skipping export")
+        elif not sheets_exporter.is_available():
+            print("ℹ️  Google Sheets exporter not available, skipping export")
+        elif not new_jobs:
+            print("ℹ️  No new jobs to export to Google Sheets")
+        else:
             try:
                 # Ensure today's sheet exists (create if it doesn't)
                 sheets_exporter.ensure_today_sheet_exists()
                 
-                # Get all jobs that were first seen today
-                today_jobs = db.get_jobs_for_today()
-                
                 # Filter out jobs that have already been exported
+                # Use new_jobs directly instead of querying database
                 unexported_jobs = []
-                for job in today_jobs:
+                for job in new_jobs:
                     job_id = job.get('id')
-                    if job_id and not db.is_job_exported_to_sheets(job_id):
+                    if not job_id:
+                        print(f"⚠️  Skipping job without ID for Sheets export: {job.get('title', 'Unknown')[:50]}")
+                        continue
+                    if db.is_job_exported_to_sheets(job_id):
+                        print(f"ℹ️  Job {job_id} already exported to Sheets, skipping")
+                    else:
                         unexported_jobs.append(job)
                 
                 if unexported_jobs:
-                    print(f"Exporting {len(unexported_jobs)} job(s) to Google Sheets...")
+                    print(f"📊 Exporting {len(unexported_jobs)} job(s) to Google Sheets...")
                     exported_count = sheets_exporter.export_jobs(unexported_jobs)
                     
                     # Verify export count
@@ -139,11 +169,14 @@ def run_scrape(db, scraper, slack_notifier, translator, sheets_exporter):
                         if job_id:
                             if db.mark_job_exported_to_sheets(job_id):
                                 marked_count += 1
+                                print(f"   ✅ Job {job_id} marked as exported in database")
+                            else:
+                                print(f"   ⚠️  Failed to mark job {job_id} as exported in database")
                     
                     if marked_count != exported_count:
                         print(f"⚠️  Warning: Exported {exported_count} job(s), but only {marked_count} were marked as exported in database")
                 else:
-                    print(f"ℹ️  All today's jobs were already exported to Google Sheets")
+                    print(f"ℹ️  All {len(new_jobs)} new job(s) were already exported to Google Sheets")
             except ConnectionError as e:
                 print(f"⚠️  Network error exporting to Google Sheets: {e}")
                 print("   Jobs will be exported when network connection is restored.")
