@@ -10,6 +10,12 @@ from google.auth.exceptions import TransportError
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from config.settings import GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_CREDENTIALS_PATH
 
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+
 
 class SheetsExporter:
     """Export jobs to Google Sheets with daily sheets and conditional formatting"""
@@ -377,20 +383,74 @@ class SheetsExporter:
         Returns:
             List of values for the row
         """
-        # Format scraped_at timestamp to YYYY/MM/DD-HH:MM format
-        scraped_at = job.get('scraped_at', '')
+        # Format scraped_at timestamp to YYYY/MM/DD-HH:MM format in EST timezone
+        # Try multiple possible field names for the timestamp
+        scraped_at = job.get('scraped_at') or job.get('first_seen_at') or job.get('last_seen_at')
+        
+        def convert_to_est(dt: datetime) -> datetime:
+            """Convert datetime to Eastern Time (EST/EDT)"""
+            if not PYTZ_AVAILABLE:
+                # If pytz is not available, return as-is (fallback)
+                return dt
+            
+            # Assume the datetime is in local timezone (or UTC if naive)
+            # Convert to UTC first if it's naive, then to Eastern Time
+            if dt.tzinfo is None:
+                # Assume it's in local timezone, convert to UTC first
+                # For SQLite, timestamps are typically stored as naive local time
+                # We'll treat them as UTC and convert to EST
+                dt = pytz.UTC.localize(dt)
+            
+            # Convert to Eastern Time (handles both EST and EDT automatically)
+            eastern = pytz.timezone('America/New_York')
+            dt_est = dt.astimezone(eastern)
+            return dt_est
+        
         if scraped_at:
             try:
-                # Parse the datetime string and format it
+                # Handle different datetime formats from SQLite
                 if isinstance(scraped_at, str):
-                    dt = datetime.strptime(scraped_at, '%Y-%m-%d %H:%M:%S')
+                    # Try multiple formats that SQLite might use
+                    formats = [
+                        '%Y-%m-%d %H:%M:%S.%f',  # With microseconds
+                        '%Y-%m-%d %H:%M:%S',      # Standard format
+                        '%Y-%m-%d %H:%M',         # Without seconds
+                    ]
+                    dt = None
+                    for fmt in formats:
+                        try:
+                            dt = datetime.strptime(scraped_at, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if dt is None:
+                        # If all formats fail, try to parse as ISO format
+                        try:
+                            dt = datetime.fromisoformat(scraped_at.replace('Z', '+00:00'))
+                        except:
+                            # If all parsing fails, use current time as fallback
+                            dt = datetime.now()
+                    
+                    # Convert to EST
+                    dt_est = convert_to_est(dt)
+                    formatted_time = dt_est.strftime('%Y/%m/%d-%H:%M')
+                elif isinstance(scraped_at, datetime):
+                    # Convert to EST
+                    dt_est = convert_to_est(scraped_at)
+                    formatted_time = dt_est.strftime('%Y/%m/%d-%H:%M')
                 else:
-                    dt = scraped_at
-                formatted_time = dt.strftime('%Y/%m/%d-%H:%M')
-            except:
-                formatted_time = str(scraped_at)
+                    # Fallback to current time if we can't parse
+                    dt_est = convert_to_est(datetime.now())
+                    formatted_time = dt_est.strftime('%Y/%m/%d-%H:%M')
+            except Exception as e:
+                # If parsing fails, use current time as fallback
+                dt_est = convert_to_est(datetime.now())
+                formatted_time = dt_est.strftime('%Y/%m/%d-%H:%M')
         else:
-            formatted_time = ''
+            # If no timestamp available, use current time
+            dt_est = convert_to_est(datetime.now())
+            formatted_time = dt_est.strftime('%Y/%m/%d-%H:%M')
         
         # Handle skills (convert list to comma-separated string)
         skills = job.get('skills', [])
@@ -404,13 +464,27 @@ class SheetsExporter:
         # Payment Verified as boolean (for checkbox)
         payment_verified = bool(job.get('client_payment_verified', False))
         
+        # Rating as boolean (for checkbox): True if rating > 0, False if 0 or None
+        client_rating = job.get('client_rating', 0)
+        try:
+            rating_value = float(client_rating) if client_rating else 0
+            rating_checked = rating_value > 0
+        except (ValueError, TypeError):
+            rating_checked = False
+        
+        # Format budget: remove "USD" and "USD " from the budget string
+        budget = job.get('budget', '')
+        if budget:
+            # Remove "USD " and "USD" from the budget string
+            budget = str(budget).replace('USD ', '').replace('USD', '').strip()
+        
         return [
-            formatted_time,  # Scraped At (formatted)
+            formatted_time,  # Time (formatted)
             job.get('title', ''),  # Title
-            payment_verified,  # Payment Verified (checkbox)
+            payment_verified,  # Payment (checkbox)
             job.get('client_country', ''),  # Country
-            job.get('client_rating', ''),  # Client Rating
-            job.get('budget', ''),  # Budget
+            rating_checked,  # Rating (checkbox: True if rating > 0)
+            budget,  # Budget (without USD)
             skills_str,  # Skills
             job.get('url', '')  # URL
         ]
@@ -533,6 +607,33 @@ class SheetsExporter:
                         print(f"  ✅ Payment column formatted as checkboxes")
                     except Exception as e:
                         print(f"  ⚠️  Warning: Could not format Payment as checkboxes: {e}")
+                
+                # Format Rating column (column E, index 4) as checkboxes
+                if len(rows) > 0:
+                    try:
+                        sheet_id = worksheet.id
+                        requests = [{
+                            'setDataValidation': {
+                                'range': {
+                                    'sheetId': sheet_id,
+                                    'startRowIndex': start_row - 1,  # 0-indexed
+                                    'endRowIndex': end_row,  # 0-indexed (exclusive)
+                                    'startColumnIndex': 4,  # Column E (Rating)
+                                    'endColumnIndex': 5
+                                },
+                                'rule': {
+                                    'condition': {
+                                        'type': 'BOOLEAN'
+                                    },
+                                    'showCustomUi': True,
+                                    'strict': True
+                                }
+                            }
+                        }]
+                        self.spreadsheet.batch_update({'requests': requests})
+                        print(f"  ✅ Rating column formatted as checkboxes")
+                    except Exception as e:
+                        print(f"  ⚠️  Warning: Could not format Rating as checkboxes: {e}")
                 
                 print(f"  ✅ Formatting applied successfully")
             except (TransportError, RequestsConnectionError) as e:
