@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config.settings import (
     DATABASE_PATH, DEFAULT_CATEGORY, DEFAULT_LANGUAGE,
     MAX_PAGES, STOP_ON_KNOWN_JOB, SLACK_WEBHOOK_URL, ENABLE_SLACK_NOTIFICATIONS,
-    SCRAPE_INTERVAL, ENABLE_SHEETS_EXPORT, GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_CREDENTIALS_PATH
+    SCRAPE_INTERVAL, ENABLE_SHEETS_EXPORT, GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_CREDENTIALS_JSON
 )
 from storage.database import WorkanaDatabase
 from scrapers.workana_scraper import WorkanaScraper
@@ -240,12 +240,12 @@ def main():
     
     # Initialize Google Sheets exporter (if configured)
     sheets_exporter = None
-    if ENABLE_SHEETS_EXPORT and GOOGLE_SHEETS_CREDENTIALS_PATH:
+    if ENABLE_SHEETS_EXPORT and GOOGLE_SHEETS_CREDENTIALS_JSON:
         print("[4/6] Initializing Google Sheets exporter...")
         try:
             sheets_exporter = SheetsExporter(
                 spreadsheet_id=GOOGLE_SHEETS_SPREADSHEET_ID,
-                credentials_path=GOOGLE_SHEETS_CREDENTIALS_PATH,
+                credentials_json=GOOGLE_SHEETS_CREDENTIALS_JSON,
                 translator=translator  # Pass translator for translating jobs
             )
             print(f"✅ Google Sheets export enabled")

@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.exceptions import TransportError
 from requests.exceptions import ConnectionError as RequestsConnectionError
-from config.settings import GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_CREDENTIALS_PATH
+from config.settings import GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_CREDENTIALS_JSON
 
 try:
     import pytz
@@ -26,17 +26,17 @@ class SheetsExporter:
         "https://www.googleapis.com/auth/drive"
     ]
     
-    def __init__(self, spreadsheet_id: str = None, credentials_path: str = None, translator = None):
+    def __init__(self, spreadsheet_id: str = None, credentials_json: str = None, translator = None):
         """
         Initialize Google Sheets exporter
         
         Args:
             spreadsheet_id: Google Sheets spreadsheet ID
-            credentials_path: Path to Google service account credentials JSON file
+            credentials_json: Google service account credentials as JSON string (from .env)
             translator: Optional translator instance for translating job data
         """
         self.spreadsheet_id = spreadsheet_id or GOOGLE_SHEETS_SPREADSHEET_ID
-        self.credentials_path = credentials_path or GOOGLE_SHEETS_CREDENTIALS_PATH
+        self.credentials_json = credentials_json or GOOGLE_SHEETS_CREDENTIALS_JSON
         self.translator = translator
         self.client = None
         self.spreadsheet = None
@@ -44,16 +44,25 @@ class SheetsExporter:
         if not self.spreadsheet_id:
             raise ValueError("Google Sheets spreadsheet ID is required")
         
-        if not self.credentials_path:
-            raise ValueError("Google service account credentials path is required")
+        if not self.credentials_json:
+            raise ValueError("Google service account credentials JSON is required (set GOOGLE_SHEETS_CREDENTIALS_JSON in .env)")
         
         self._connect()
     
     def _connect(self):
         """Connect to Google Sheets API"""
         try:
-            creds = Credentials.from_service_account_file(
-                self.credentials_path,
+            # Parse credentials JSON string from .env
+            try:
+                credentials_info = json.loads(self.credentials_json)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Invalid JSON in GOOGLE_SHEETS_CREDENTIALS_JSON: {e}. "
+                    "Please ensure the entire JSON content is properly formatted as a single line in .env"
+                ) from e
+            
+            creds = Credentials.from_service_account_info(
+                credentials_info,
                 scopes=self.SCOPE
             )
             self.client = gspread.authorize(creds)

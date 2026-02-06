@@ -73,6 +73,8 @@ ENABLE_SLACK_NOTIFICATIONS = bool(SLACK_WEBHOOK_URL)  # Auto-enable if webhook U
 # Google Sheets export
 # Load from .env file, environment variable, or leave empty
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID', '1cwP7M2acOs6kohi6KZY__nnT7ys_-DW4iNun_-XBVcY').strip()
-GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv('GOOGLE_SHEETS_CREDENTIALS_PATH', '').strip()
-ENABLE_SHEETS_EXPORT = bool(GOOGLE_SHEETS_CREDENTIALS_PATH)  # Auto-enable if credentials path is set
+# Google service account credentials as JSON string (paste entire JSON content from service account key as single line in .env)
+# Example: GOOGLE_SHEETS_CREDENTIALS_JSON={"type":"service_account","project_id":"...","private_key":"..."}
+GOOGLE_SHEETS_CREDENTIALS_JSON = os.getenv('GOOGLE_SHEETS_CREDENTIALS_JSON', '').strip()
+ENABLE_SHEETS_EXPORT = bool(GOOGLE_SHEETS_CREDENTIALS_JSON)  # Auto-enable if credentials JSON is set
 
